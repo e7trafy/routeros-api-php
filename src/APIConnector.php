@@ -20,14 +20,23 @@ class APIConnector
     protected $stream;
 
     /**
-     * Constructor
+     * APIConnector constructor.
      *
-     * @param StreamInterface $stream
+     * @param \RouterOS\Interfaces\StreamInterface $stream
      */
-
     public function __construct(StreamInterface $stream)
     {
         $this->stream = $stream;
+    }
+
+    /**
+     * Close stream connection
+     *
+     * @return void
+     */
+    public function close(): void
+    {
+        $this->stream->close();
     }
 
     /**
@@ -48,8 +57,9 @@ class APIConnector
     /**
      * Write word to stream
      *
-     * @param   string $word
-     * @return  int return number of written bytes
+     * @param string $word
+     *
+     * @return int return number of written bytes
      */
     public function writeWord(string $word): int
     {

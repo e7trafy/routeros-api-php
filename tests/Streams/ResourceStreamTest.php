@@ -2,9 +2,11 @@
 
 namespace RouterOS\Tests\Streams;
 
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
-use PHPUnit\Framework\Constraint\IsType;
+use RouterOS\Exceptions\StreamException;
 use RouterOS\Streams\ResourceStream;
+use stdClass;
 
 /**
  * Limit code coverage to the class RouterOS\APIStream
@@ -17,14 +19,13 @@ class ResourceStreamTest extends TestCase
      * Test that constructor throws an InvalidArgumentException on bad parameter type
      *
      * @covers ::__construct
-     * @expectedException \InvalidArgumentException
      * @dataProvider constructNotResourceProvider
      *
      * @param $notResource
      */
-
-    public function test__constructNotResource($notResource)
+    public function testConstructNotResource($notResource): void
     {
+        $this->expectException(InvalidArgumentException::class);
         new ResourceStream($notResource);
     }
 
@@ -40,9 +41,9 @@ class ResourceStreamTest extends TestCase
             [3.14],       // float
             ['a string'], // string
             [
-                [0, 3.14]   // Array
+                [0, 3.14],   // Array
             ],
-            [new \stdClass()], // Object
+            [new stdClass()], // Object
             // What else ?
         ];
     }
@@ -56,12 +57,17 @@ class ResourceStreamTest extends TestCase
      * @param resource $resource      Cannot typehint, PHP refuse it
      * @param bool     $closeResource shall we close the resource ?
      */
-    public function test_construct($resource, bool $closeResource = true)
+    public function testConstruct($resource, bool $closeResource = true): void
     {
-        $resourceStream = new ResourceStream($resource);
+        $resourceStream = new class($resource) extends ResourceStream {
+            public function getStream()
+            {
+                return $this->stream;
+            }
+        };
 
-        $stream = $this->getObjectAttribute($resourceStream, 'stream');
-        $this->assertInternalType(IsType::TYPE_RESOURCE, $stream);
+        $stream = $resourceStream->getStream();
+        $this->assertIsResource($stream);
 
         if ($closeResource) {
             fclose($resource);
@@ -76,8 +82,8 @@ class ResourceStreamTest extends TestCase
     public function constructProvider(): array
     {
         return [
-            [fopen(__FILE__, 'rb'),], // Myself, sure I exists
-            [fsockopen('tcp://' . getenv('ROS_HOST'), getenv('ROS_PORT_MODERN')),], // Socket
+            [fopen(__FILE__, 'rb')], // Myself, sure I exists
+            [fsockopen('tcp://' . getenv('ROS_HOST'), getenv('ROS_PORT_MODERN'))], // Socket
             [STDIN, false], // Try it, but do not close STDIN please !!!
             // What else ?
         ];
@@ -89,12 +95,13 @@ class ResourceStreamTest extends TestCase
      * @covers ::read
      * @dataProvider readProvider
      *
-     * @param   ResourceStream $stream   Cannot typehint, PHP refuse it
-     * @param   string         $expected the result we should have
-     * @throws  \RouterOS\Exceptions\StreamException
-     * @throws  \InvalidArgumentException
+     * @param ResourceStream $stream   Cannot typehint, PHP refuse it
+     * @param string         $expected the result we should have
+     *
+     * @throws \RouterOS\Exceptions\StreamException
+     * @throws \InvalidArgumentException
      */
-    public function test__read(ResourceStream $stream, string $expected)
+    public function testRead(ResourceStream $stream, string $expected): void
     {
         $this->assertSame($expected, $stream->read(strlen($expected)));
     }
@@ -115,15 +122,16 @@ class ResourceStreamTest extends TestCase
      *
      * @covers ::read
      * @dataProvider readBadLengthProvider
-     * @expectedException \InvalidArgumentException
      *
-     * @param   ResourceStream $stream Cannot typehint, PHP refuse it
-     * @param   int            $length
+     * @param ResourceStream $stream Cannot typehint, PHP refuse it
+     * @param int            $length
+     *
      * @throws  \RouterOS\Exceptions\StreamException
      * @throws  \InvalidArgumentException
      */
-    public function test__readBadLength(ResourceStream $stream, int $length)
+    public function testReadBadLength(ResourceStream $stream, int $length): void
     {
+        $this->expectException(InvalidArgumentException::class);
         $stream->read($length);
     }
 
@@ -143,13 +151,13 @@ class ResourceStreamTest extends TestCase
      *
      * @covers ::read
      * @dataProvider readBadResourceProvider
-     * @expectedException \RouterOS\Exceptions\StreamException
      *
-     * @param   ResourceStream $stream Cannot typehint, PHP refuse it
-     * @param   int            $length
+     * @param ResourceStream $stream Cannot typehint, PHP refuse it
+     * @param int            $length
      */
-    public function test__readBadResource(ResourceStream $stream, int $length)
+    public function testReadBadResource(ResourceStream $stream, int $length): void
     {
+        $this->expectException(StreamException::class);
         $stream->read($length);
     }
 
@@ -158,6 +166,7 @@ class ResourceStreamTest extends TestCase
         $resource = fopen(__FILE__, 'rb');
         $me       = new ResourceStream($resource);
         fclose($resource);
+
         return [
             [$me, 1],
         ];
@@ -169,11 +178,12 @@ class ResourceStreamTest extends TestCase
      * @covers ::write
      * @dataProvider writeProvider
      *
-     * @param   ResourceStream $stream  to test
-     * @param   string         $toWrite the writed string
+     * @param ResourceStream $stream  to test
+     * @param string         $toWrite the writed string
+     *
      * @throws  \RouterOS\Exceptions\StreamException
      */
-    public function test__write(ResourceStream $stream, string $toWrite)
+    public function testWrite(ResourceStream $stream, string $toWrite): void
     {
         $this->assertEquals(strlen($toWrite), $stream->write($toWrite));
     }
@@ -193,13 +203,13 @@ class ResourceStreamTest extends TestCase
      *
      * @covers ::write
      * @dataProvider writeBadResourceProvider
-     * @expectedException \RouterOS\Exceptions\StreamException
      *
      * @param ResourceStream $stream  to test
      * @param string         $toWrite the written string
      */
-    public function test__writeBadResource(ResourceStream $stream, string $toWrite)
+    public function testWriteBadResource(ResourceStream $stream, string $toWrite): void
     {
+        $this->expectException(StreamException::class);
         $stream->write($toWrite);
     }
 
@@ -219,12 +229,12 @@ class ResourceStreamTest extends TestCase
      *
      * @covers ::close
      * @dataProvider doubleCloseProvider
-     * @expectedException \RouterOS\Exceptions\StreamException
      *
      * @param ResourceStream $stream to test
      */
-    public function test_doubleClose(ResourceStream $stream)
+    public function testDoubleClose(ResourceStream $stream): void
     {
+        $this->expectException(StreamException::class);
         $stream->close();
         $stream->close();
     }
@@ -242,13 +252,13 @@ class ResourceStreamTest extends TestCase
      * @covers ::close
      * @covers ::write
      * @dataProvider writeClosedResourceProvider
-     * @expectedException \RouterOS\Exceptions\StreamException
      *
      * @param ResourceStream $stream  to test
      * @param string         $toWrite the written string
      */
-    public function test_close(ResourceStream $stream, string $toWrite)
+    public function testClose(ResourceStream $stream, string $toWrite)
     {
+        $this->expectException(StreamException::class);
         $stream->close();
         $stream->write($toWrite);
     }
@@ -259,5 +269,4 @@ class ResourceStreamTest extends TestCase
             [new ResourceStream(fopen('/dev/null', 'wb')), 'sasasaas'],  // Take that
         ];
     }
-
 }

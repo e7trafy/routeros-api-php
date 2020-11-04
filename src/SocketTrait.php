@@ -11,39 +11,35 @@ trait SocketTrait
      *
      * @var resource|null
      */
-    private $_socket;
+    private $socket;
 
     /**
      * Code of error
      *
      * @var int
      */
-    private $_socket_err_num;
+    private $socket_err_num;
 
     /**
      * Description of socket error
      *
      * @var string
      */
-    private $_socket_err_str;
+    private $socket_err_str;
 
     /**
      * Initiate socket session
      *
-     * @return  void
-     * @throws  \RouterOS\Exceptions\ClientException
-     * @throws  \RouterOS\Exceptions\ConfigException
+     * @return void
+     * @throws \RouterOS\Exceptions\ClientException
+     * @throws \RouterOS\Exceptions\ConfigException
      */
-    private function openSocket()
+    private function openSocket(): void
     {
+        $options = ['ssl' => $this->config('ssl_options')];
+
         // Default: Context for ssl
-        $context = stream_context_create([
-            'ssl' => [
-                'ciphers'          => 'ADH:ALL',
-                'verify_peer'      => false,
-                'verify_peer_name' => false
-            ]
-        ]);
+        $context = stream_context_create($options);
 
         // Default: Proto tcp:// but for ssl we need ssl://
         $proto = $this->config('ssl') ? 'ssl://' : '';
@@ -51,8 +47,8 @@ trait SocketTrait
         // Initiate socket client
         $socket = @stream_socket_client(
             $proto . $this->config('host') . ':' . $this->config('port'),
-            $this->_socket_err_num,
-            $this->_socket_err_str,
+            $this->socket_err_num,
+            $this->socket_err_str,
             $this->config('timeout'),
             STREAM_CLIENT_CONNECT,
             $context
@@ -60,12 +56,12 @@ trait SocketTrait
 
         // Throw error is socket is not initiated
         if (false === $socket) {
-            throw new ClientException('Unable to establish socket session, ' . $this->_socket_err_str);
+            throw new ClientException('Unable to establish socket session, ' . $this->socket_err_str);
         }
-        
+
         //Timeout read
         stream_set_timeout($socket, $this->config('timeout'));
-        
+
         // Save socket to static variable
         $this->setSocket($socket);
     }
@@ -77,27 +73,28 @@ trait SocketTrait
      */
     private function closeSocket(): bool
     {
-        return fclose($this->_socket);
+        return fclose($this->socket);
     }
 
     /**
      * Save socket resource to static variable
      *
-     * @param   resource $socket
+     * @param resource $socket
+     *
      * @return  void
      */
-    private function setSocket($socket)
+    private function setSocket($socket): void
     {
-        $this->_socket = $socket;
+        $this->socket = $socket;
     }
 
     /**
      * Return socket resource if is exist
      *
-     * @return  resource
+     * @return resource
      */
     public function getSocket()
     {
-        return $this->_socket;
+        return $this->socket;
     }
 }

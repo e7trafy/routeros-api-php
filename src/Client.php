@@ -2,10 +2,22 @@
 
 namespace RouterOS;
 
+use DivineOmega\SSHConnection\SSHConnection;
 use RouterOS\Exceptions\ClientException;
 use RouterOS\Exceptions\ConfigException;
-use RouterOS\Exceptions\QueryException;
+use RouterOS\Interfaces\ClientInterface;
+use RouterOS\Interfaces\QueryInterface;
 use RouterOS\Helpers\ArrayHelper;
+use function array_keys;
+use function array_shift;
+use function chr;
+use function count;
+use function is_array;
+use function md5;
+use function pack;
+use function preg_match_all;
+use function sleep;
+use function trim;
 
 /**
  * Class Client for RouterOS management
@@ -22,29 +34,36 @@ class Client implements Interfaces\ClientInterface
      *
      * @var \RouterOS\Config
      */
-    private $_config;
+    private $config;
 
     /**
      * API communication object
      *
      * @var \RouterOS\APIConnector
      */
+    private $connector;
 
-    private $_connector;
+    /**
+     * Some strings with custom output
+     *
+     * @var string
+     */
+    private $customOutput;
 
     /**
      * Client constructor.
      *
-     * @param array|\RouterOS\Config $config
+     * @param array|\RouterOS\Interfaces\ConfigInterface $config      Array with configuration or Config object
+     * @param bool                                       $autoConnect If false it will skip auto-connect stage if not need to instantiate connection
      *
      * @throws \RouterOS\Exceptions\ClientException
      * @throws \RouterOS\Exceptions\ConfigException
      * @throws \RouterOS\Exceptions\QueryException
      */
-    public function __construct($config)
+    public function __construct($config, bool $autoConnect = true)
     {
         // If array then need create object
-        if (\is_array($config)) {
+        if (is_array($config)) {
             $config = new Config($config);
         }
 
@@ -54,7 +73,12 @@ class Client implements Interfaces\ClientInterface
         }
 
         // Save config if everything is okay
-        $this->_config = $config;
+        $this->config = $config;
+
+        // Skip next step if not need to instantiate connection
+        if (false === $autoConnect) {
+            return;
+        }
 
         // Throw error if cannot to connect
         if (false === $this->connect()) {
@@ -72,50 +96,24 @@ class Client implements Interfaces\ClientInterface
      */
     private function config(string $parameter)
     {
-        return $this->_config->get($parameter);
-    }
-
-    /**
-     * Send write query to RouterOS
-     *
-     * @param string|array|\RouterOS\Query $query
-     *
-     * @return \RouterOS\Client
-     * @throws \RouterOS\Exceptions\QueryException
-     * @deprecated
-     * @codeCoverageIgnore
-     */
-    public function write($query): Client
-    {
-        if (\is_string($query)) {
-            $query = new Query($query);
-        } elseif (\is_array($query)) {
-            $endpoint = array_shift($query);
-            $query    = new Query($endpoint, $query);
-        }
-
-        if (!$query instanceof Query) {
-            throw new QueryException('Parameters cannot be processed');
-        }
-
-        // Submit query to RouterOS
-        return $this->writeRAW($query);
+        return $this->config->get($parameter);
     }
 
     /**
      * Send write query to RouterOS (modern version of write)
      *
-     * @param string|Query $endpoint   Path of API query or Query object
-     * @param array|null   $where      List of where filters
-     * @param string|null  $operations Some operations which need make on response
-     * @param string|null  $tag        Mark query with tag
+     * @param array|string|\RouterOS\Interfaces\QueryInterface $endpoint   Path of API query or Query object
+     * @param array|null                                       $where      List of where filters
+     * @param string|null                                      $operations Some operations which need make on response
+     * @param string|null                                      $tag        Mark query with tag
      *
-     * @return \RouterOS\Client
+     * @return \RouterOS\Interfaces\ClientInterface
      * @throws \RouterOS\Exceptions\QueryException
      * @throws \RouterOS\Exceptions\ClientException
+     * @throws \RouterOS\Exceptions\ConfigException
      * @since 1.0.0
      */
-    public function query($endpoint, array $where = null, string $operations = null, string $tag = null): Client
+    public function query($endpoint, array $where = null, string $operations = null, string $tag = null): ClientInterface
     {
         // If endpoint is string then build Query object
         $query = ($endpoint instanceof Query)
@@ -128,48 +126,10 @@ class Client implements Interfaces\ClientInterface
             // If array is multidimensional, then parse each line
             if (is_array($where[0])) {
                 foreach ($where as $item) {
-
-                    // Null by default
-                    $key      = null;
-                    $operator = null;
-                    $value    = null;
-
-                    switch (\count($item)) {
-                        case 1:
-                            list($key) = $item;
-                            break;
-                        case 2:
-                            list($key, $operator) = $item;
-                            break;
-                        case 3:
-                            list($key, $operator, $value) = $item;
-                            break;
-                        default:
-                            throw new ClientException('From 1 to 3 parameters of "where" condition is allowed');
-                    }
-                    $query->where($key, $operator, $value);
+                    $query = $this->preQuery($item, $query);
                 }
             } else {
-                // Null by default
-                $key      = null;
-                $operator = null;
-                $value    = null;
-
-                switch (\count($where)) {
-                    case 1:
-                        list($key) = $where;
-                        break;
-                    case 2:
-                        list($key, $operator) = $where;
-                        break;
-                    case 3:
-                        list($key, $operator, $value) = $where;
-                        break;
-                    default:
-                        throw new ClientException('From 1 to 3 parameters of "where" condition is allowed');
-                }
-
-                $query->where($key, $operator, $value);
+                $query = $this->preQuery($where, $query);
             }
 
         }
@@ -189,43 +149,102 @@ class Client implements Interfaces\ClientInterface
     }
 
     /**
+     * Query helper
+     *
+     * @param array                               $item
+     * @param \RouterOS\Interfaces\QueryInterface $query
+     *
+     * @return \RouterOS\Query
+     * @throws \RouterOS\Exceptions\QueryException
+     * @throws \RouterOS\Exceptions\ClientException
+     */
+    private function preQuery(array $item, QueryInterface $query): QueryInterface
+    {
+        // Null by default
+        $key      = null;
+        $operator = null;
+        $value    = null;
+
+        switch (count($item)) {
+            case 1:
+                [$key] = $item;
+                break;
+            case 2:
+                [$key, $operator] = $item;
+                break;
+            case 3:
+                [$key, $operator, $value] = $item;
+                break;
+            default:
+                throw new ClientException('From 1 to 3 parameters of "where" condition is allowed');
+        }
+
+        return $query->where($key, $operator, $value);
+    }
+
+    /**
      * Send write query object to RouterOS
      *
-     * @param \RouterOS\Query $query
+     * @param \RouterOS\Interfaces\QueryInterface $query
      *
-     * @return \RouterOS\Client
+     * @return \RouterOS\Interfaces\ClientInterface
      * @throws \RouterOS\Exceptions\QueryException
+     * @throws \RouterOS\Exceptions\ConfigException
      * @since 1.0.0
      */
-    private function writeRAW(Query $query): Client
+    private function writeRAW(QueryInterface $query): ClientInterface
     {
+        $commands = $query->getQuery();
+
+        // Check if first command is export
+        if (0 === strpos($commands[0], '/export')) {
+
+            // Convert export command with all arguments to valid SSH command
+            $arguments = explode('/', $commands[0]);
+            unset($arguments[1]);
+            $arguments = implode(' ', $arguments);
+
+            // Call the router via ssh and store output of export
+            $this->customOutput = $this->export($arguments);
+
+            // Return current object
+            return $this;
+        }
+
         // Send commands via loop to router
-        foreach ($query->getQuery() as $command) {
-            $this->_connector->writeWord(trim($command));
+        foreach ($commands as $command) {
+            $this->connector->writeWord(trim($command));
         }
 
         // Write zero-terminator (empty string)
-        $this->_connector->writeWord('');
+        $this->connector->writeWord('');
 
+        // Return current object
         return $this;
     }
 
     /**
-     * Read RAW response from RouterOS
+     * Read RAW response from RouterOS, it can be /export command results also, not only array from API
      *
-     * @return array
+     * @return array|string
      * @since 1.0.0
      */
-    private function readRAW(): array
+    public function readRAW()
     {
         // By default response is empty
         $response = [];
         // We have to wait a !done or !fatal
         $lastReply = false;
 
+        // Convert strings to array and return results
+        if ($this->isCustomOutput()) {
+            // Return RAW configuration
+            return $this->customOutput;
+        }
+
         // Read answer from socket in loop
         while (true) {
-            $word = $this->_connector->readWord();
+            $word = $this->connector->readWord();
 
             if ('' === $word) {
                 if ($lastReply) {
@@ -262,7 +281,7 @@ class Client implements Interfaces\ClientInterface
      * Reply ends with a complete !done or !fatal block (ended with 'empty line')
      * A !fatal block precedes TCP connexion close
      *
-     * @param bool $parse
+     * @param bool $parse If need parse output to array
      *
      * @return mixed
      */
@@ -270,6 +289,12 @@ class Client implements Interfaces\ClientInterface
     {
         // Read RAW response
         $response = $this->readRAW();
+
+        // Return RAW configuration if custom output is set
+        if ($this->isCustomOutput()) {
+            $this->customOutput = null;
+            return $response;
+        }
 
         // Parse results and return
         return $parse ? $this->rosario($response) : $response;
@@ -296,8 +321,8 @@ class Client implements Interfaces\ClientInterface
      *
      * Based on RouterOSResponseArray solution by @arily
      *
-     * @link    https://github.com/arily/RouterOSResponseArray
-     * @since   1.0.0
+     * @see https://github.com/arily/RouterOSResponseArray
+     * @since 1.0.0
      */
     private function rosario(array $raw): array
     {
@@ -342,7 +367,7 @@ class Client implements Interfaces\ClientInterface
     {
         $result = [];
         $i      = -1;
-        $lines  = \count($response);
+        $lines  = count($response);
         foreach ($response as $key => $value) {
             switch ($value) {
                 case '!re':
@@ -357,18 +382,12 @@ class Client implements Interfaces\ClientInterface
                     for ($j = $key + 1; $j <= $lines; $j++) {
                         // If we have lines after current one
                         if (isset($response[$j])) {
-                            $this->pregResponse($response[$j], $matches);
-                            if (isset($matches[1][0], $matches[2][0])) {
-                                $result['after'][$matches[1][0]] = $matches[2][0];
-                            }
+                            $this->preParseResponse($response[$j], $result, $matches);
                         }
                     }
                     break 2;
                 default:
-                    $this->pregResponse($value, $matches);
-                    if (isset($matches[1][0], $matches[2][0])) {
-                        $result[$i][$matches[1][0]] = $matches[2][0];
-                    }
+                    $this->preParseResponse($value, $result, $matches, $i);
                     break;
             }
         }
@@ -376,14 +395,30 @@ class Client implements Interfaces\ClientInterface
     }
 
     /**
+     * Response helper
+     *
+     * @param string     $value    Value which should be parsed
+     * @param array      $result   Array with parsed response
+     * @param array|null $matches  Matched words
+     * @param string|int $iterator Type of iterations or number of item
+     */
+    private function preParseResponse(string $value, array &$result, ?array &$matches, $iterator = 'after'): void
+    {
+        $this->pregResponse($value, $matches);
+        if (isset($matches[1][0], $matches[2][0])) {
+            $result[$iterator][$matches[1][0]] = $matches[2][0];
+        }
+    }
+
+    /**
      * Parse result from RouterOS by regular expression
      *
-     * @param string $value
-     * @param array  $matches
+     * @param string     $value
+     * @param array|null $matches
      */
-    private function pregResponse(string $value, &$matches)
+    protected function pregResponse(string $value, ?array &$matches): void
     {
-        preg_match_all('/^[=|\.](.*)=(.*)/', $value, $matches);
+        preg_match_all('/^[=|.]([.\w-]+)=(.*)/', $value, $matches);
     }
 
     /**
@@ -406,13 +441,13 @@ class Client implements Interfaces\ClientInterface
             // Now need use this hash for authorization
             $query = new Query('/login', [
                 '=name=' . $this->config('user'),
-                '=response=00' . md5(\chr(0) . $this->config('pass') . pack('H*', $response['after']['ret']))
+                '=response=00' . md5(chr(0) . $this->config('pass') . pack('H*', $response['after']['ret'])),
             ]);
         } else {
             // Just login with our credentials
             $query = new Query('/login', [
                 '=name=' . $this->config('user'),
-                '=password=' . $this->config('pass')
+                '=password=' . $this->config('pass'),
             ]);
 
             // If we set modern auth scheme but router with legacy firmware then need to retry query,
@@ -429,17 +464,17 @@ class Client implements Interfaces\ClientInterface
         // => problem with legacy version, swap it and retry
         // Only tested with ROS pre 6.43, will test with post 6.43 => this could make legacy parameter obsolete?
         if ($legacyRetry && $this->isLegacy($response)) {
-            $this->_config->set('legacy', true);
+            $this->config->set('legacy', true);
             return $this->login();
         }
 
         // If RouterOS answered with invalid credentials then throw error
-        if (!empty($response[0]) && $response[0] === '!trap') {
+        if (!empty($response[0]) && '!trap' === $response[0]) {
             throw new ClientException('Invalid user name or password');
         }
 
         // Return true if we have only one line from server and this line is !done
-        return (1 === count($response)) && isset($response[0]) && ($response[0] === '!done');
+        return (1 === count($response)) && isset($response[0]) && ('!done' === $response[0]);
     }
 
     /**
@@ -448,11 +483,11 @@ class Client implements Interfaces\ClientInterface
      * @param array $response
      *
      * @return bool
-     * @throws ConfigException
+     * @throws \RouterOS\Exceptions\ConfigException
      */
-    private function isLegacy(array &$response): bool
+    private function isLegacy(array $response): bool
     {
-        return \count($response) > 1 && $response[0] === '!done' && !$this->config('legacy');
+        return count($response) > 1 && '!done' === $response[0] && !$this->config('legacy');
     }
 
     /**
@@ -463,7 +498,7 @@ class Client implements Interfaces\ClientInterface
      * @throws \RouterOS\Exceptions\ConfigException
      * @throws \RouterOS\Exceptions\QueryException
      */
-    private function connect(): bool
+    public function connect(): bool
     {
         // By default we not connected
         $connected = false;
@@ -476,7 +511,7 @@ class Client implements Interfaces\ClientInterface
 
             // If socket is active
             if (null !== $this->getSocket()) {
-                $this->_connector = new APIConnector(new Streams\ResourceStream($this->getSocket()));
+                $this->connector = new APIConnector(new Streams\ResourceStream($this->getSocket()));
                 // If we logged in then exit from loop
                 if (true === $this->login()) {
                     $connected = true;
@@ -493,5 +528,44 @@ class Client implements Interfaces\ClientInterface
 
         // Return status of connection
         return $connected;
+    }
+
+    /**
+     * Check if custom output is not empty
+     *
+     * @return bool
+     */
+    private function isCustomOutput(): bool
+    {
+        return null !== $this->customOutput;
+    }
+
+    /**
+     * Execute export command on remote host, it also will be used
+     * if "/export" command passed to query.
+     *
+     * @param string|null $arguments String with arguments which should be passed to export command
+     *
+     * @return string
+     * @throws \RouterOS\Exceptions\ConfigException
+     * @since 1.3.0
+     */
+    public function export(string $arguments = null): string
+    {
+        // Connect to remote host
+        $connection =
+            (new SSHConnection())
+                ->timeout($this->config('timeout'))
+                ->to($this->config('host'))
+                ->onPort($this->config('ssh_port'))
+                ->as($this->config('user') . '+etc')
+                ->withPassword($this->config('pass'))
+                ->connect();
+
+        // Run export command
+        $command = $connection->run('/export' . ' ' . $arguments);
+
+        // Return the output
+        return $command->getOutput();
     }
 }
