@@ -10,6 +10,8 @@ use RouterOS\Exceptions\QueryException;
 use RouterOS\Query;
 use RouterOS\Config;
 use RouterOS\Exceptions\ClientException;
+use RouterOS\Exceptions\ConnectException;
+use RouterOS\Exceptions\BadCredentialsException;
 
 class ClientTest extends TestCase
 {
@@ -109,7 +111,7 @@ class ClientTest extends TestCase
 
     public function testConstructExceptionBadHost(): void
     {
-        $this->expectException(ClientException::class);
+        $this->expectException(ConnectException::class);
 
         new Client([
             'host'     => '127.0.0.1',
@@ -159,7 +161,7 @@ class ClientTest extends TestCase
 
     public function testConstructWrongPass(): void
     {
-        $this->expectException(ClientException::class);
+        $this->expectException(BadCredentialsException::class);
 
         new Client([
             'user'     => $this->config['user'],
@@ -171,7 +173,7 @@ class ClientTest extends TestCase
 
     public function testConstructWrongNet(): void
     {
-        $this->expectException(ClientException::class);
+        $this->expectException(ConnectException::class);
 
         new Client([
             'user'     => $this->config['user'],
@@ -249,6 +251,12 @@ class ClientTest extends TestCase
 
         // $this->assertCount(13, $read);
         $this->assertEquals('zzzz', $read[0]['tag']);
+
+        /*
+         * Build query with option count
+         */
+        $read = $this->client->query('/interface/monitor-traffic')->read(true, ['count' => 3]);
+        $this->assertCount(3, $read);
     }
 
     public function testReadAsIterator(): void

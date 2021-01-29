@@ -32,25 +32,28 @@ trait ShortsTrait
     /**
      * Alias for ->read() method
      *
-     * @param bool $parse If need parse output to array
+     * @param bool  $parse   If need parse output to array
+     * @param array $options Additional options
      *
      * @return mixed
      * @since 0.7
      */
-    public function r(bool $parse = true)
+    public function r(bool $parse = true, array $options = [])
     {
-        return $this->read($parse);
+        return $this->read($parse, $options);
     }
 
     /**
      * Alias for ->readAsIterator() method
      *
+     * @param array $options Additional options
+     *
      * @return \RouterOS\ResponseIterator
      * @since 1.0.0
      */
-    public function ri(): ResponseIterator
+    public function ri(array $options = []): ResponseIterator
     {
-        return $this->readAsIterator();
+        return $this->readAsIterator($options);
     }
 
     /**
@@ -61,13 +64,14 @@ trait ShortsTrait
      * @param string|null                                      $operations Some operations which need make on response
      * @param string|null                                      $tag        Mark query with tag
      * @param bool                                             $parse      If need parse output to array
+     * @param array                                            $options    Additional options
      *
      * @return array
      * @since 1.0.0
      */
-    public function qr($endpoint, array $where = null, string $operations = null, string $tag = null, bool $parse = true): array
+    public function qr($endpoint, array $where = null, string $operations = null, string $tag = null, bool $parse = true, array $options = []): array
     {
-        return $this->query($endpoint, $where, $operations, $tag)->read($parse);
+        return $this->query($endpoint, $where, $operations, $tag)->read($parse, $options);
     }
 
     /**
@@ -77,12 +81,13 @@ trait ShortsTrait
      * @param array|null                                       $where      List of where filters
      * @param string|null                                      $operations Some operations which need make on response
      * @param string|null                                      $tag        Mark query with tag
+     * @param array                                            $options    Additional options
      *
      * @return \RouterOS\ResponseIterator
      * @since 1.0.0
      */
-    public function qri($endpoint, array $where = null, string $operations = null, string $tag = null): ResponseIterator
+    public function qri($endpoint, array $where = null, string $operations = null, string $tag = null, array $options = []): ResponseIterator
     {
-        return $this->query($endpoint, $where, $operations, $tag)->readAsIterator();
+        return $this->query($endpoint, $where, $operations, $tag)->readAsIterator($options);
     }
 }
